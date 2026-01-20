@@ -1,0 +1,163 @@
+---
+title: "ransom_nitrate"
+created: 12/31/2025
+updated: 01/18/2026
+output: html_document
+---
+
+### Rmarkdown Description
+
+The purpose of this markdown is to combine the testing and training datasets from Ransom et al. 2023, clip it to my study area, and impute nondetects using the `nada2` package. I got this data here: https://doi.org/10.5066/P9RT579Z.
+
+Loading all packages.
+```{r, results = "hide", message = FALSE, warning = FALSE}
+library(tidyverse)
+library(NADA2)
+library(ggplot2)
+```
+
+### combining Testing and Training Datasets
+
+Combining testing and training datasets from Ransom. et al. 2023.
+```{r}
+# loading in the data
+rans_test_data <- read.delim("../input/raw/ransom_nitrate/National_NO3_shallow/Inputs/test_data.txt", stringsAsFactors = TRUE)
+rans_train_data <- read.delim("../input/raw/ransom_nitrate/National_NO3_shallow/Inputs/train_data.txt", stringsAsFactors = TRUE)
+
+# combining the datasets
+rans_data <- bind_rows(rans_test_data, rans_train_data)
+
+# writing to .csv
+write.csv(rans_data, "../input/processed/rans_data_bined.csv")
+```
+
+### Clipping the Data in ArcGIS Pro 
+
+I read "rans_data_bined.csv" into ArcGIS Pro, used the "XY Table To Point" tool to plot the data using the GCS_North_American_1983 coordinate system, defined the raster projection to USA_Contiguous_Albers_Equal_Area_Conic_USGS_version, and clipped the data to a shapefile of US aquifers (see README.Rmd section "Data Collection: Aquifer delineations") touching the southeastern states (AL, FL, GA, MS, NC, SC, TN). This was done in map labeled "tt_prep". I exported this table of clipped points to "input/processed/tt_points.csv"
+```{r}
+rans_clipped <- read.csv("../input/processed/tt_data/tt_points.csv", stringsAsFactors = TRUE)
+```
+
+### Imputing the Data Using `nada2` 
+
+I consulted ChatGPT for how to use the nada2 package to impute data. This is because many of the tutorials on the Practical Stats website (which houses the nada2 tutorials by Dennis Helsel) don't explain how to impute, it walks you through how to do all the things in nada2 that don't require actual imputation.
+```{r}
+rans1 <- rans_clipped %>%
+  mutate(
+    # there is a column named "NO3_RL" which is the reporting limit, this is what I will use to create the indicator column
+    # this code creates a column where the entry is "TRUE" if the "NO3_RL" isn't "NA"
+    ind_NO3 = !is.na(NO3_RL),
+    
+    # it also seems like the "result" column of the datasets used in the tutorial have the detection limit entered for non-detected entries, so I'm going to make a column in rans data that looks like that as well
+    # if ind_NO3 is TRUE, use the detection limit, otherwise, use the result
+    result_or_det_lim = if_else(ind_NO3, NO3_RL, NO3),
+    
+    # make sure the new result column is numeric
+    result_or_det_lim = as.numeric(result_or_det_lim)
+  )
+
+# `cenros()` is a function in `nada2` that uses the results column (with the detection limit replaced for nondetects) and the logical indicator column and Censored Regression on Order Statistics to impute nondetect values. It returns regression results.
+rans_imputed <- cenros(rans1$result_or_det_lim, rans1$ind_NO3)
+
+# because `cenros()` imputes all the data, I want to keep only the imputed nondetect values and return the detected values to their original value
+rans2 <- rans1 %>%
+  mutate(
+    NO3_results = if_else(
+      ind_NO3,
+      rans_imputed$modeled,
+      NO3                    
+    )
+  ) %>%
+  mutate(
+    NO3_results = as.numeric(NO3_results)
+  )
+
+write.csv(rans2, "../input/processed/tt_data/rans_imputed.csv")
+```
+
+### Visualizing the Results
+
+Now, I can also look at the distribution of my data before and after imputing via a boxplot.
+```{r}
+pre_imputation_boxplot <- cboxplot(rans1$result_or_det_lim, rans1$ind_NO3, show = TRUE, dl.col = "lightblue", Title = "Estimated Distribution of Ransom Data before Imputing Censored Values", Ylab = "Nitrate (mg/L as N)")
+
+imputed_boxplot <- ggplot(rans2, aes(y = NO3_results)) +
+  geom_boxplot() +
+  labs(
+    title = "Distribution of Ransom Data with Imputed Censored Values",
+    y = "Nitrate (mg/L as N)"
+  )
+
+pre_imputation_boxplot
+imputed_boxplot
+```
+
+I also want to see what the distribution of data looks before and after imputing.
+```{r}
+for_pre_imputation_histo <- rans1 %>%
+  mutate(
+    result_or_na = if_else(ind_NO3, NA, NO3)
+  )
+
+pre_imputation_histo <- ggplot(for_pre_imputation_histo, aes(x = log(result_or_na))) +
+  geom_histogram() +
+  labs(
+    title = "Distribution of Ransom Data before Imputing Censored Values",
+    x = "Log Nitrate (mg/L as N)"
+  )
+
+for_only_imputed_histo <- rans2 %>%
+  filter(!is.na(NO3_RL))
+
+only_imputed_histo <- ggplot(for_only_imputed_histo, aes(x = log(NO3_results))) +
+  geom_histogram() +
+  labs(
+    title = "Distribution of Imputed Data Only",
+    x = "Log Nitrate (mg/L as N)"
+  )
+
+imputed_histo <- ggplot(rans2, aes(x = log(NO3_results))) +
+  geom_histogram() +
+  labs(
+    title = "Distribution of Ransom Data with Imputed Censored Values",
+    x = "Log Nitrate (mg/L as N)"
+  )
+
+pre_imputation_histo
+only_imputed_histo
+imputed_histo
+```
+
+Nitrate concentration has been plotted on a log scale thus far. Sometimes, it's difficult for me to understand the data so I'm going to plot the distribution of nitrate concentration as-is now.
+```{r}
+pre_imputation_histo <- ggplot(for_pre_imputation_histo, aes(x = result_or_na)) +
+  geom_histogram() +
+  labs(
+    title = "Distribution of Ransom Data before Imputing Censored Values",
+    x = "Nitrate (mg/L as N)"
+  )
+
+only_imputed_histo <- ggplot(for_only_imputed_histo, aes(x = NO3_results)) +
+  geom_histogram() +
+  labs(
+    title = "Distribution of Imputed Data Only",
+    x = "Nitrate (mg/L as N)"
+  )
+
+imputed_histo <- ggplot(rans2, aes(x = NO3_results)) +
+  geom_histogram() +
+  labs(
+    title = "Distribution of Ransom Data with Imputed Censored Values",
+    x = "Nitrate (mg/L as N)"
+  )
+
+pre_imputation_histo
+only_imputed_histo
+imputed_histo
+```
+
+
+
+
+
+

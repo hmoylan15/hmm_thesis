@@ -1,0 +1,163 @@
+---
+title: "vif"
+created: 1/7/2026
+updated: 1/7/2026
+output: html_document
+---
+
+### Rmarkdown Description
+
+The purpose of this Rmarkdown is to prepare the final dataset for nitrate modeling efforts. This will include removing unnecessary columns and calculating the vif for all predictor variables. If the vif is > 7.5, the predictor variable will be removed from the dataset.
+
+Loading all packages.
+```{r}
+library(tidymodels)
+library(tidyverse)
+library(car)
+library(corrplot)
+```
+
+### Cleaning the data table.
+```{r}
+raw_data <- read.csv("../input/processed/tt_data/rans_usda_septic.csv", stringsAsFactors = TRUE)
+
+data_cleaner <- raw_data %>%
+  # removing unnecessary columns
+  select(-Join_Count, -TARGET_FID, -Field1_1, -Field1_12, -spl, -MaxOfDATES, -R00631, -P00631, -NO3_RL, -NO3, -LNNO3, -Septic_2010_kgN_new, -ind_NO3, -result_or_det_lim, -zoneID)
+```
+Now, data_cleaner has ID, site number, lat, long, year, 100 predictor variables, and nitrate concentration columns.
+
+### Creating the Linear Model
+
+I need to create a "dummy" linear model to calculate vif for each predictor variable. This is a "dummy" linear model because I don't actually care the relationship the predictor variable has with nutrient concentration.
+```{r}
+# creating the predictor matrix
+x_vif <- data_cleaner %>%
+  select(-NO3_results, -SITE_NO, -DEC_LAT_VA, -DEC_LONG_VA, -year, -Field1) %>%
+  # select only numeric columns
+  select(where(is.numeric)) %>%
+  # select only columns where there is at least one non na value
+  select(where(~ any(!is.na(.)))) %>%
+  # need dummy response
+  mutate(.dummy_y = 1)
+
+# creating the dummy model
+lm_dummy <- lm(.dummy_y ~ ., data = x_vif)
+
+vif_tbl <- lm_dummy %>%
+  car::vif() %>%
+  enframe(name = "variable", value = "vif") %>%
+  arrange(desc(vif))
+# Error in vif.default(.) : there are aliased coefficients in the model
+```
+
+So now I need to remove the predictors that have perfect multicollinearity.
+```{r}
+alias(lm_dummy)
+```
+Because EvaporiteKarst_1k_new, PipingPseudokarst_1k_new, and VolcanicPseudokarst_1k_new have pretty much no variance (are mostly 0), they are essentially the same as the intercept. I need to remove these before trying to compute vif again.
+
+Removing perfectly multicollinear variables.
+```{r}
+x_vif_new <- x_vif %>%
+  select(-EvaporiteKarst_1k_new, -PipingPseudokarst_1k_new, -VolcanicPseudokarst_1k_new)
+
+lm_dummy_new <- lm(.dummy_y ~ ., data = x_vif_new)
+
+vif_tbl <- lm_dummy %>%
+  car::vif() %>%
+  enframe(name = "variable", value = "vif") %>%
+  arrange(desc(vif))
+```
+
+So now I need to remove the predictors that have perfect multicollinearity...again
+```{r}
+alias(lm_dummy_new)
+```
+
+Now Chat GPT is suggesting I stop using car::vif() and calculate VIFs from the correlation matrix.
+```{r}
+x <- x_vif_new %>%
+  select(-.dummy_y)
+
+x_scaled <- x %>%
+  mutate(across(everything(), scale))
+
+R <- cor(x_scaled, use = "pairwise.complete.obs")
+
+vif_values <- diag(solve(R))
+
+vif_tbl <- tibble(
+  variable = names(vif_values),
+  vif = vif_values
+) %>%
+  arrange(desc(vif))
+```
+
+Well, some of these predictors are highly correlated with each other. I need to identify which variables are correlated with which to refine my model. 
+```{r}
+high_vif_vars <- vif_tbl %>%
+  filter(vif > 7.5) %>%
+  pull(variable)
+
+x_high_vif <- x %>%
+  select(all_of(high_vif_vars))
+
+corr_mat <- cor(x_high_vif, use = "pairwise.complete.obs")
+
+png(
+  filename = "../output/figures/high_vif_corrplot.png",
+  width = 4000,
+  height = 3000,
+  res = 600
+)
+
+corrplot(
+  corr_mat, 
+  method = "color", 
+  type = "upper", 
+  tl.cex = 0.5, 
+  tl.col = "black", 
+  number.cex = 0.2, 
+  addCoef.col = "black", 
+  diag = FALSE
+  )
+
+dev.off()
+```
+
+The correlation plot allowed me to visualize exactly which predictors were correlated with each other. The final correlation plot for predictors with vif >7.5 include the following variables: PET_mmyr, us_tave198_degC, DEPTH, TOP, NCManure_D2_new, NGraze_D2_new, NCManure_D3_new, NCManure_D1_new, NGraze_D3_new, NGraze_D1_new, AVG_NO10_mean, AVG_NO4_mean, NCManure_D0_new, NGraze_D0_new, DSD9, Karst_1k_new, CarbonateKarst_1k_new, DSD7, NFarm_D2_new, DSD6, avg_awc_mean, ET_Reitz, us_ppt1981_mmyr, NFarm_D3_new, pctag_d1, HYDCLASS_mean, DSD8, avg_silt_mean, rech48, NFarm_D1_new, Top5_Fe, avg_kfact_mean, DrnClass_4_mean, NNonFarm_D1_new.
+
+PET_mmyr and us_tave198_degC were highly correlated (r >= 0.9) with each other, however, separate mechanisms drive these two phenomena so I will not remove either from my model.
+
+Next, NCManure_D0_new, NCManure_D1_new, NCManure_D2_new, and NCManure_D3_new are highly correlated with each other so I will just keep NCManure_D0_new in my model.
+
+NGraze_D0_new, NGraze_D1_new, NGraze_D2_new, NGraze_D3_new are highly correlated with each other so I will just keep NGraze_D0_new in my model.
+
+AVG_N10_mean and AVG_NO4_mean were highly correlated with each other so I will just keep AVG_N04_mean as it is representative of the clay fraction of the sediment.
+
+DEPTH and TOP are highly correlated with each other and they represent the same mechanism. I will keep DEPTH as it is a more complete dataset.
+
+NFarm_D1_new, NFarm_D2_new, and NFarm_D3_new are also highly correlated with each other. I will choose NFarm_D1_new to keep in the model as it is farm fertilizer concentration closest to the sampling date.
+
+CarbonateKarst_1k_new and Karst_1k_new are highly correlated so I will keep CarbonateKarst_1k_new as it represent a more specific type of karst.
+
+So, altogether, I am removing NCManure_D1_new, NCManure_D2_new, NCManure_D3_new, NGraze_D1_new, NGraze_D2_new, NGraze_D3_new, AVG_N10_mean, TOP, NFarm_D2_new, NFarm_D3_new, and Karst_1k_new from my dataset.
+
+```{r}
+# removing unwanted predictors from the dataset
+data_cleanest <- data_cleaner %>%
+  select(-NCManure_D1_new, -NCManure_D2_new, -NCManure_D3_new, -NGraze_D1_new, -NGraze_D2_new, -NGraze_D3_new, -AVG_NO10_mean, -TOP, -NFarm_D2_new, -NFarm_D3_new, -Karst_1k_new)
+
+write.csv(data_cleanest, "../input/processed/tt_data/tt_post_vif.csv")
+```
+
+Now, there is one more thing left to do. I need to bring tt_post_vif.csv into ArcGIS Pro and spatially join the data to my aquifers shapefile so I can subset the dataset by aquifer during modeling. I brought the .csv into ArcGIS Pro, used the xy table to point tool to create a shapefile of the points. I projected the shapefile to USA Contiguous Albers Equal Area Conic USGS and the spatial join tool to add AQ_Name and AQ_Code columns to my dataset. The final file from this step is "../input/processed/tt_data/tt_with_aq.csv".
+
+
+
+
+
+
+
+

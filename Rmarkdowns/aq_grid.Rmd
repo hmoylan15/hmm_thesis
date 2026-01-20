@@ -1,0 +1,45 @@
+---
+title: "aq_grid"
+created: 1/7/2026
+updated: 1/7/2026
+output: html_document
+---
+
+### Rmarkdown Purpose
+
+The purpose of this Rmarkdown is to create a 1km x 1km dot grid across the aquifers of interest to my study.
+
+Loading necessary packages.
+```{r}
+library(sf)
+```
+
+
+### Creating 1km x 1km grid
+```{r}
+aq_shapefile <- st_read("../input/processed/aquifer_shapefiles/all_18_aquifers.shp")
+
+# making the shapefile an sf object
+sf_aq_polygon <- st_as_sf(aq_shapefile, crs = 5070)
+
+aq_grid <- st_make_grid(
+        sf_aq_polygon,
+        cellsize = 1000, # 1km x 1km grid cells
+        what = "centers",
+        square = TRUE
+      )
+
+point_grid <- st_sf(geometry = aq_grid, crs = 5070)
+
+aq_point_grid <- point_grid[
+        st_join(point_grid, sf_aq_polygon, left = FALSE),
+      ]
+
+st_write(aq_point_grid, "../output/point_grid/aq_point_grid.shp")
+```
+
+
+
+
+
+

@@ -1,0 +1,33 @@
+---
+title: "scrnint"
+output: html_document
+---
+
+library(ggplot2)
+library(tidyverse)
+
+```{r}
+df <- read.csv("input/processed/tt_data/rans_usda_septic.csv", stringsAsFactors = 3 TRUE)
+
+df1 <- df %>%
+  mutate(interval = df$DEPTH - df$TOP)
+
+plot <- ggplot(df1, aes(x = log(interval))) +
+  geom_histogram()
+
+plot
+```
+
+```{r}
+# top
+sum(is.na(df1$TOP))
+```
+
+```{r}
+# depth
+sum(is.na(df1$DEPTH))
+```
+
+
+
+

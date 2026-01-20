@@ -1,0 +1,288 @@
+---
+title: "PR_WQ"
+created: 01/15/2025
+updated: 01/18/2025
+output: html_document
+---
+
+The purpose of this RMarkdown is to wrangle and clean pH, hardness, nitrate, pesticide, lead, and arsenic data from the Water Quality Portal (WQP).
+
+```{r}
+library(EPATADA)
+library(tidyverse)
+library(sf)
+```
+
+Querying the WQP data.
+```{r}
+# specifying a list of dates I want to query (when I try to query data from 2000-01-01 to 2024-12-31 I get an error)
+years <- list(
+  c("2000-01-01", "2004-12-31"),
+  c("2005-01-01", "2009-12-31"),
+  c("2010-01-01", "2014-12-31"),
+  c("2015-01-01", "2019-12-31"),
+  c("2020-01-01", "2024-12-31")
+)
+
+ALPhysical <- purrr::map_dfr(years, \(y) {
+  TADA_DataRetrieval(
+    state = "AL",
+    startDate = y[1], 
+    endDate = y[2], 
+    sampleMedia = c("water", "Water"), 
+    characteristicType = "Physical", 
+    siteType = "Well", 
+    applyautoclean = FALSE, 
+    ask = FALSE)
+  })
+
+write.csv(ALPhysical, "../input/raw/WQP/ALPhysical.csv")
+
+ALNutrient <- purrr::map_dfr(years, \(y) {
+  TADA_DataRetrieval(
+    state = "AL", 
+    startDate = y[1], 
+    endDate = y[2], 
+    sampleMedia = c("water", "Water"), 
+    characteristicType = "Nutrient", 
+    siteType = "Well", 
+    applyautoclean = FALSE, 
+    ask = FALSE)
+  })
+
+write.csv(ALNutrient, "../input/raw/WQP/ALNutrient.csv")
+
+ALPesticides <- purrr::map_dfr(years, \(y) {
+  TADA_DataRetrieval(
+    state = "AL",  
+    startDate = y[1], 
+    endDate = y[2], 
+    sampleMedia = c("water", "Water"), 
+    characteristicType = "Organics, Pesticide", 
+    siteType = "Well", 
+    applyautoclean = FALSE, 
+    ask = FALSE)
+  })
+
+write.csv(ALPesticides, "../input/raw/WQP/ALPesticides.csv")
+
+ALMetals <- purrr::map_dfr(years, \(y) {
+  TADA_DataRetrieval(
+    state = "AL",  
+    startDate = y[1], 
+    endDate = y[2], 
+    sampleMedia = c("water", "Water"), 
+    characteristicName = c("Arsenic", "Lead"), 
+    siteType = "Well", 
+    applyautoclean = FALSE, 
+    ask = FALSE)
+  })
+
+write.csv(ALMetals, "../input/raw/WQP/ALMetals.csv")
+```
+
+Completing an initial cleaning for each dataframe. 
+```{r}
+TDPhysical <- ALPhysical %>%
+  TADA_AutoClean() %>%
+  TADA_AnalysisDataFilter( . , clean = TRUE, ground_water = TRUE, sediment = FALSE, other = FALSE, surface_water = FALSE) %>%
+  filter(ActivityMediaSubdivisionName == "Groundwater" | ActivityMediaSubdivisionName == "Ground Water")
+# ALPhysical has 6139 observations, TDPhysical has 5981 observations
+
+TDNutrient <- ALNutrient %>%
+  TADA_AutoClean() %>%
+  TADA_AnalysisDataFilter( . , clean = TRUE, ground_water = TRUE, sediment = FALSE, other = FALSE, surface_water = FALSE) %>%
+  filter(ActivityMediaSubdivisionName == "Groundwater" | ActivityMediaSubdivisionName == "Ground Water")
+# ALNutrient haS 3940 observations, TDNutrient has 3861 observations
+
+TDPesticides <- ALPesticides %>%
+  TADA_AutoClean() %>%
+  TADA_AnalysisDataFilter( . , clean = TRUE, ground_water = TRUE, sediment = FALSE, other = FALSE, surface_water = FALSE) %>%
+  filter(ActivityMediaSubdivisionName == "Groundwater" | ActivityMediaSubdivisionName == "Ground Water")
+# ALPesticides has 58965 observations, TDPesticides has 58947 observations
+
+TDMetals <- ALMetals %>%
+  TADA_AutoClean() %>%
+  TADA_AnalysisDataFilter( . , clean = TRUE, ground_water = TRUE, sediment = FALSE, other = FALSE, surface_water = FALSE) %>%
+  filter(ActivityMediaSubdivisionName == "Groundwater" | ActivityMediaSubdivisionName == "Ground Water")
+# ALMetals has 508 observations, TDMetals has 476 observations
+```
+
+Creating dataframes for each water quality parameter of interest.
+```{r}
+ph_data <- TDPhysical %>%
+  filter(TADA.CharacteristicName == "PH")
+
+# hardness_columns <- TDPhysical %>%
+#   filter(TADA.CharacteristicName %in% c(
+#     "HARDNESS, CA, MG",
+#     "HARDNESS, CARBONATE",
+#     "HARDNESS, NON-CARBONATE",
+#     "TOTAL HARDNESS"
+#   ))
+# 
+# hardness_summary <- TADA_SummarizeColumn(hardness_columns, "TADA.CharacteristicName")
+
+# "HARDNESS, CA, MG" has the most entries so I will use that variable to represent hardness
+
+hardness_data <- TDPhysical %>%
+  filter(TADA.CharacteristicName == "HARDNESS, CA, MG")
+
+nitrate_data <- TDNutrient %>%
+  filter(TADA.CharacteristicName == "NITRATE")
+
+arsenic_data <- TDMetals %>%
+  filter(TADA.CharacteristicName == "ARSENIC")
+
+lead_data <- TDMetals %>%
+  filter(TADA.CharacteristicName == "LEAD")
+
+# now I still want a dataframe containing all parameters of interest
+all_params <- bind_rows(ph_data, hardness_data, nitrate_data, arsenic_data, lead_data, TDPesticides)
+# 61340 observations
+```
+
+Making sure all coordinates are valid
+```{r}
+# This function will flag imprecise coordinates or coordinates outside the US
+clean_coords <- TADA_FlagCoordinates(all_params, clean_outsideUSA = "no", clean_imprecise = FALSE, flaggedonly = FALSE)
+
+unique(clean_coords$TADA.SuspectCoordinates.Flag)
+# [1] "Pass"                             "Imprecise_lessthan3decimaldigits"
+
+# I am not going to remove any entries based on these flags
+```
+
+This next chunk of code flags entries based on method, fraction, speciation, and result unit.
+```{r}
+flagged_method <- TADA_FlagMethod(all_params, clean = FALSE)
+# [1] "No Suspect method/characteristic combinations in your dataframe. Returning the input dataframe with TADA.AnalyticalMethod.Flag column for tracking."
+
+flagged_fraction <- TADA_FlagFraction(flagged_method, clean = FALSE)
+# [1] "TADA_FlagFraction: Rows with Suspect sample fractions have been flagged but retained. Review these rows using the TADA.SampleFraction.Flag column before proceeding and/or set clean = TRUE."
+
+flagged_speciation <- TADA_FlagSpeciation(flagged_fraction, clean = "none")
+# [1] "TADA_FlagSpeciation: Rows with Suspect speciations have been flagged but retained. Review these rows using the new TADA.MethodSpeciation.Flag column before proceeding and/or set clean = 'suspect_only' or 'both'."
+
+flagged_QC <- TADA_FindQCActivities(flagged_speciation, clean = FALSE)
+
+flagged_result_unit <- TADA_FlagResultUnit(flagged_QC, clean = "none")
+# [1] "TADA_FlagResultUnit: Rows with Suspect result value units have been flagged but retained. Review the TADA.ResultUnit.Flag column and remove rows as desired before proceeding and/or set clean = 'suspect_only' or 'both'."
+# ends with 61340 observations
+```
+
+Now let's take a look at what's been flagged.
+```{r}
+TADA_FieldValuesPie(flagged_result_unit, field = "TADA.SampleFraction.Flag")
+TADA_FieldValuesPie(flagged_result_unit, field = "TADA.MethodSpeciation.Flag")
+TADA_FieldValuesPie(flagged_result_unit, field = "TADA.ResultUnit.Flag")
+TADA_FieldValuesPie(flagged_result_unit, field = "TADA.AnalyticalMethod.Flag")
+TADA_FieldValuesPie(flagged_result_unit, field = "TADA.ActivityType.Flag")
+```
+
+Removing untrustworthy flags.
+```{r}
+problem_flagged <- flagged_result_unit %>%
+  filter(TADA.SampleFraction.Flag == "Suspect" | TADA.MethodSpeciation.Flag == "Suspect" | TADA.ResultUnit.Flag == "Suspect" | !TADA.ActivityType.Flag %in% c("Non_QC", "Not Reviewed") | TADA.AnalyticalMethod.Flag == "Suspect") %>%
+  mutate(TADA.RemovalReason = "Invalid Unit, Method, Speciation, or Activity Type.")
+# 5675 observations
+
+after_flags <- flagged_result_unit %>% 
+  filter(!ResultIdentifier %in% problem_flagged$ResultIdentifier)
+# 55665 observations
+```
+
+The `TADA_IDCensoredData()` function imputes non-detects for TADA.ResultMeasureValue. I dont' want that so I'm to see what the ResultDetectionCondition and DetectionQuantitationLimitTypeName fields look like. These are the fields the TADA_IDCensoredData functions uses to create the flags.
+```{r}
+TADA_FieldValuesPie(after_flags, field = "ResultDetectionConditionText")
+TADA_FieldValuesPie(after_flags, field = "DetectionQuantitationLimitTypeName")
+TADA_FieldValuesPie(after_flags, field = "TADA.ResultMeasureValueDataTypes.Flag")
+TADA_FieldValuesPie(after_flags, field = "MeasureQualifierCode")
+```
+
+Based on these charts, I only want to remove entries where Result DetectionConditionText is "Detected Not Quantified". I used the WQX user guide domain value excel files to come to these conclusions. I don't understand what the DetectionQuantitationTypeName values are so I'm not going to remove entries based on those.
+```{r}
+problem_censored <- after_flags %>%
+  filter(ResultDetectionConditionText %in% c("Detected Not Quantified", "Systematic Contamination") | MeasureQualifierCode == "J") %>%
+  mutate(TADA.RemovalReason = "Invalid Censored Data.")
+# 36 observations
+
+after_censored <- after_flags %>% 
+  filter(!ResultIdentifier %in% problem_censored$ResultIdentifier)
+# 55629 observations
+```
+
+Flagging duplicate efforts
+```{r}
+single_org_flagged <- TADA_FindPotentialDuplicatesSingleOrg(after_censored)
+# [1] "TADA_FindPotentialDuplicatesSingleOrg: 671 groups of potentially duplicated results found in dataset. These have been placed into duplicate groups in the TADA.SingleOrgDupGroupID column and the function randomly selected one result from each group to represent a single, unduplicated value. Selected values are indicated in the TADA.SingleOrgDup.Flag as 'Unique', while duplicates are flagged as 'Duplicate' for easy filtering."
+
+after_single <- single_org_flagged %>%
+  filter(!TADA.SingleOrgDup.Flag %in% "Duplicate")
+# 54958 observations
+
+multiple_org_flagged <- TADA_FindPotentialDuplicatesMultipleOrgs(after_single)
+# [1] "TADA_FindNearbySites: No org_hierarchy supplied by user. Organization will not be taken into account during metadata selection."
+# [1] "No duplicate results detected. Returning input dataframe with duplicate flagging columns set to 'N'."
+```
+
+Harmonizing Nitrate Units, Fractionation, Speciation
+```{r}
+# fraction assumption: dissolved = filtered
+# fraction assumption: total = unfiltered
+nutrients_harmonized <- after_single %>%
+  filter(TADA.ResultSampleFractionText %in% c(
+    "DISSOLVED",
+    "FILTERED"
+    )) %>%
+  filter(is.na(ResultDetectionConditionText) | ResultDetectionConditionText == "Not Detected") %>%
+  mutate(
+    TADA.ResultSampleFractionText = case_when(
+      TADA.ResultSampleFractionText == "DISSOLVED" ~ "FILTERED",
+      TRUE ~ TADA.ResultSampleFractionText
+      ),
+    
+    TADA.ResultMeasureValue = case_when(
+      TADA.MethodSpeciationName == "AS NO3" ~ TADA.ResultMeasureValue * 0.225,
+      TRUE ~ TADA.ResultMeasureValue
+    ),
+    
+    TADA.MethodSpeciationName = case_when(
+      TADA.MethodSpeciationName %in% "AS NO3" ~ "AS N",
+      TRUE ~ TADA.MethodSpeciationName
+    ),
+    
+    numeric_well_depth = as.numeric(`WellDepthMeasure.MeasureValue`),
+    numeric_hole_depth = as.numeric(`WellHoleDepthMeasure.MeasureValue`),
+    
+    well_depth = case_when(
+      `WellDepthMeasure.MeasureUnitCode` == "ft" ~ `numeric_well_depth` * 0.3048,
+      TRUE ~ as.numeric(`numeric_well_depth`)
+    ),
+    well_depth_unit = case_when(
+      `WellDepthMeasure.MeasureUnitCode` == "ft" ~ "m",
+      TRUE ~ `WellDepthMeasure.MeasureUnitCode`
+    ),
+    hole_depth = case_when(
+      `WellHoleDepthMeasure.MeasureUnitCode` == "ft" ~ `numeric_hole_depth` * 0.3048,
+      TRUE ~ as.numeric(`numeric_hole_depth`)
+    ),
+    hole_depth_unit = case_when(
+      `WellHoleDepthMeasure.MeasureUnitCode` == "ft" ~ "m",
+      TRUE ~ `WellHoleDepthMeasure.MeasureUnitCode`
+    )
+  )
+# 52145 observations
+
+write.csv(nutrients_harmonized, "../input/processed/WQP/clean_params.csv")
+```
+
+```{r}
+params <- read.csv("../input/processed/WQP/clean_params.csv")
+```
+
+
+
+
+
+

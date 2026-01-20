@@ -1,0 +1,70 @@
+---
+title: "usgs_septic"
+created: 1/6/2025
+updated: 1/6/2025
+output: html_document
+---
+
+
+### Rmarkdown Description
+
+The purpose of this Rmarkdown is to prepare the USGS septic density data for inclusion as a predictor in my model. I received the nhd septic density data here: https://doi.org/10.5066/P1WCYDPB. 
+
+### Preparation
+
+Loading the packages I need.
+```{r}
+library(nhdplusTools)
+library(tidyverse)
+library(sf)
+```
+
+Establishing my area of interest.
+```{r}
+aq_polygon <- st_read("../input/processed/aquifer_shapefiles/all_18_aquifers.shp")
+
+aq_sf <- st_as_sf(aq_polygon, crs = 5070)
+
+aq_bbox <- st_bbox(aq_sf)
+
+aq_bbox_sf <- st_as_sfc(aq_bbox)
+```
+
+### NHD Catchments
+
+Using `nhdplusTools` to download the NHDPlus Version 2.1 catchment polygons. 
+```{r}
+# crs defaults to aoi
+catchments <- get_nhdplus(AOI = aq_bbox_sf, realization = "catchment")
+
+septic <- read.csv("../input/raw/usgs_septic/NHD_SepticDensities.csv")
+
+septic <- septic %>%
+  mutate(featureid = FEATUREID)
+
+catchments_joined <- catchments %>%
+  left_join(septic, by = "featureid")
+
+# checking to make sure each row has an entry for `MS_SepDn` ("The density of septic tanks calculated as the count of septic tanks divided by the area in square kilometers; derived from the medium sewer estimate.")
+sum(is.na(catchments_joined$MS_SepDn))
+```
+
+Now, I'm going to write this data to a shapefile.
+```{r}
+st_write(catchments_joined, "../input/processed/usgs_septic/septic_nhdcatchments.shp")
+```
+
+I brought this file into ARCPro and clipped it to the se aquifers shapefile and projected it to the usgs crs. I then used the spatial join tool to attribute MS_SepDn to each ransom nitrate data point (rans_usda1.csv). I saved the final attribute table to "../input/processed/tt_data/rans_usda_septic.csv". This work was done in the map labeled "septic".
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,222 @@
+---
+title: "modeling"
+created: 1/17/2025
+updated: 1/17/2025
+output: html_document
+---
+
+### Rmarkdown Description
+
+The purpose of this Rmarkdown is to complete modeling efforts for my thesis chapt 1. There are 4 models, they are:
+
+Southeast Aquifers (SEAQ) - All Principal Aquifers in the Southeast US. Includes 18 aquifers: the Biscayne aquifer, Surficial aquifer system, Coastal lowlands aquifer system, Floridan aquifer system, Mississippi embayment aquifer system, Southeastern Coastal Plain aquifer system, Mississippi River Valley alluvial aquifer, Piedmont and Blue Ridge crystalline-rock aquifers, Valley and Ridge carbonate-rock aquifers, Valley and Ridge aquifers, Castle Hayne aquifer, Northern Atlantic Coastal Plain aquifer system, Mississippian aquifers, Ordovician aquifers, Pennsylvanian aquifers, Early Mesozoic basin aquifers, Silurian-Devonian aquifers, and Piedmont and Blue Ridge carbonate-rock aquifers. These 18 aquifers all have some area touching a southeastern US states (Alabama, Florida, Georgia, Mississippi, North Carolina, South Carolina, Tennessee.  
+
+East Gulf Coastal Plain (EGCP) - The Southernmost, Sandy Alabama Physiographic Region. Includes 4 aquifers: Coastal Lowlands aquifer system, Mississippi Embayment aquifer system, Southeastern Coastal Plain aquifer system, and Surficial aquifers.  
+
+Mississippi River Valley Alluvial Aquifer (MRVA) - An aquifer associated with high percent agricultural land use.  
+
+Piedmont (Pied) - A crystalline-rock aquifer spanning AL - PA.  
+
+I would like to acknowledge the use of ChatGPT, a language model developed by OpenAI in the preparation of this Rmarkdown. ChatGPT was used for code assistance and de-bugging.
+
+### Preparation
+
+Loading in the packages I will need.
+```{r, results = "hide", message = FALSE, warning = FALSE}
+library(tidyverse)
+library(tidymodels)
+tidymodels_prefer()
+library(vip)
+library(sf)
+library(terra)
+library(showtext)
+library(doParallel)
+```
+
+### Reading and Splitting Data
+
+Reading in the raw data (that has been imputed using the `nada2` package and has 2008, 2012, 2016, and 2020 usda crop data layer and a new septic density predictor variables) and taking log base 10 of the nitrate results.
+```{r}
+# raw data
+rans <- read.csv("../input/processed/tt_data/tt_with_aq.csv") %>%
+  select(-Join_Count, -TARGET_FID, -pctag_d3)
+
+# SEAQ data
+seaq_data <- rans %>%
+  mutate(log_NO3_results = log10(NO3_results))
+
+# EGCP data
+egcp_data <- rans %>%
+  filter(AQ_CODE %in% c(201, 203, 204, 111)) %>% # Coastal Lowlands aquifer system, Mississippi Embayment aquifer system, Southeastern Coastal Plain aquifer system, and Surficial aquifers
+  mutate(log_NO3_results = log10(NO3_results))
+
+# MRVA data
+mrva_data <- rans %>%
+  filter(AQ_CODE %in% 109) %>% # Mississippi River Valley alluvial aquifer
+  mutate(log_NO3_results = log10(NO3_results))
+
+#Pied data
+pied_data <- rans %>%
+  filter(AQ_CODE %in% 611) %>% # Piedmont and Blue Ridge crystalline-rock aquifers
+  mutate(log_NO3_results = log10(NO3_results))
+```
+
+Splitting the data 70/30 and stratifying by AQ_NAME.
+```{r}
+# seaq model
+set.seed(15)
+seaq_split <- initial_split(seaq_data, prop = 0.70, strata = AQ_NAME)
+seaq_train <- training(seaq_split) # 9055 observations
+seaq_test <- testing(seaq_split) # 3883 observations
+
+#egcp model
+set.seed(16)
+egcp_split <- initial_split(egcp_data, prop = 0.70, strata = AQ_NAME)
+egcp_train <- training(egcp_split) # 1901 observations
+egcp_test <- testing(egcp_split) # 817 observations
+
+# mrva model
+set.seed(17)
+mrva_split <- initial_split(mrva_data, prop = 0.70)
+mrva_train <- training(mrva_split) # 301 observations
+mrva_test <- testing(mrva_split) # 130 observations
+
+# pied model
+set.seed(18)
+pied_split <- initial_split(pied_data, prop = 0.70)
+pied_train <- training(pied_split) # 1314 observations
+pied_test <- testing(pied_split) # 564 observations
+```
+
+### Creating Workflows
+
+Beginning the boosted tree workflow.
+```{r}
+# defining the model
+reg_spec <- boost_tree(
+  trees = tune(), 
+  tree_depth = tune(), 
+  learn_rate = tune(), 
+  loss_reduction = tune(), 
+  min_n = tune(),
+  mtry = tune()
+  ) %>%
+  set_mode("regression") %>%
+  set_engine("xgboost")
+
+# seaq recipe and workflow
+seaq_rec <- recipe(
+  log_NO3_results ~ us_ppt1981_mmyr + us_tave198_degC + ET_Reitz + PET_mmyr + FloodPlain1k_new + CoarseOverlay_new + KarstDensity_new + DistToKarst_new + CarbonateKarst_1k_new +  EvaporiteKarst_1k_new + PipingPseudokarst_1k_new + VolcanicPseudokarst_1k_new + EvaporiteBasin_new + GypsumExtent_new + SM_UNIT_NAME_Alluvial_sediments__thick + LP1 + LP2 + LP3 + LP4 + LP5 + LP6 + LP7 + LP8 + LP9 + DSD1 + DSD2 + DSD3 + DSD4 + DSD6 + DSD7 + DSD8 + DSD9 + BFI48 + dtw + tt_total + wc_avg + trans + rech48 + runoff_Reitz + StreamDensity + STRM_DIST + SubsurfContactTime + TWI + LR_arsenic + AWD_MGAL_new + TileDrained_1k_new + NCManure_D0_new + NGraze_D0_new + NNonFarm_D0_new + NNonFarm_D1_new + NNonFarm_D2_new + NNonFarm_D3_new + NFarm_D0_new + NFarm_D1_new + TD_OXN_T_new + TD_REDN_T_new + CBNF_Mean_new + BNF_new + DrnClass_3_mean + DrnClass_4_mean + DrnClass_6_mean + DrnClass_8_mean + DrnClass_9_mean + hydgrp_B_mean + hydgrp_CD_mean + avg_awc_mean + avg_bd_mean + avg_kfact_mean + avg_kv_mean + AVG_NO4_mean + avg_om_mean + avg_silt_mean + AWS25_mean + HYDCLASS_mean + C_As +  C_C_Tot + TOP5_Fe + C_Mg + TOP5_Mg + C_Mn + TOP5_Mn + WTDEPL_m + pctag_d0 + pctag_d1 + pctag_d2 + MS_SpDn + DEPTH + scrn_length_new, 
+  data = seaq_train
+)
+
+# creating the workflow
+seaq_wflow <- workflow() %>%
+  add_model(reg_spec) %>%
+  add_recipe(seaq_rec)
+
+# egcp recipe and workflow
+egcp_rec <- recipe(
+  log_NO3_results ~ us_ppt1981_mmyr + us_tave198_degC + ET_Reitz + PET_mmyr + FloodPlain1k_new + CoarseOverlay_new + KarstDensity_new + DistToKarst_new + CarbonateKarst_1k_new +  EvaporiteKarst_1k_new + PipingPseudokarst_1k_new + VolcanicPseudokarst_1k_new + EvaporiteBasin_new + GypsumExtent_new + SM_UNIT_NAME_Alluvial_sediments__thick + LP1 + LP2 + LP3 + LP4 + LP5 + LP6 + LP7 + LP8 + LP9 + DSD1 + DSD2 + DSD3 + DSD4 + DSD6 + DSD7 + DSD8 + DSD9 + BFI48 + dtw + tt_total + wc_avg + trans + rech48 + runoff_Reitz + StreamDensity + STRM_DIST + SubsurfContactTime + TWI + LR_arsenic + AWD_MGAL_new + TileDrained_1k_new + NCManure_D0_new + NGraze_D0_new + NNonFarm_D0_new + NNonFarm_D1_new + NNonFarm_D2_new + NNonFarm_D3_new + NFarm_D0_new + NFarm_D1_new + TD_OXN_T_new + TD_REDN_T_new + CBNF_Mean_new + BNF_new + DrnClass_3_mean + DrnClass_4_mean + DrnClass_6_mean + DrnClass_8_mean + DrnClass_9_mean + hydgrp_B_mean + hydgrp_CD_mean + avg_awc_mean + avg_bd_mean + avg_kfact_mean + avg_kv_mean + AVG_NO4_mean + avg_om_mean + avg_silt_mean + AWS25_mean + HYDCLASS_mean + C_As +  C_C_Tot + TOP5_Fe + C_Mg + TOP5_Mg + C_Mn + TOP5_Mn + WTDEPL_m + pctag_d0 + pctag_d1 + pctag_d2 + MS_SpDn + DEPTH + scrn_length_new, 
+  data = egcp_train
+)
+
+egcp_wflow <- workflow() %>%
+  add_model(reg_spec) %>%
+  add_recipe(egcp_rec)
+
+# mrva recipe and workflow
+mrva_rec <- recipe(
+  log_NO3_results ~ us_ppt1981_mmyr + us_tave198_degC + ET_Reitz + PET_mmyr + FloodPlain1k_new + CoarseOverlay_new + KarstDensity_new + DistToKarst_new + CarbonateKarst_1k_new +  EvaporiteKarst_1k_new + PipingPseudokarst_1k_new + VolcanicPseudokarst_1k_new + EvaporiteBasin_new + GypsumExtent_new + SM_UNIT_NAME_Alluvial_sediments__thick + LP1 + LP2 + LP3 + LP4 + LP5 + LP6 + LP7 + LP8 + LP9 + DSD1 + DSD2 + DSD3 + DSD4 + DSD6 + DSD7 + DSD8 + DSD9 + BFI48 + dtw + tt_total + wc_avg + trans + rech48 + runoff_Reitz + StreamDensity + STRM_DIST + SubsurfContactTime + TWI + LR_arsenic + AWD_MGAL_new + TileDrained_1k_new + NCManure_D0_new + NGraze_D0_new + NNonFarm_D0_new + NNonFarm_D1_new + NNonFarm_D2_new + NNonFarm_D3_new + NFarm_D0_new + NFarm_D1_new + TD_OXN_T_new + TD_REDN_T_new + CBNF_Mean_new + BNF_new + DrnClass_3_mean + DrnClass_4_mean + DrnClass_6_mean + DrnClass_8_mean + DrnClass_9_mean + hydgrp_B_mean + hydgrp_CD_mean + avg_awc_mean + avg_bd_mean + avg_kfact_mean + avg_kv_mean + AVG_NO4_mean + avg_om_mean + avg_silt_mean + AWS25_mean + HYDCLASS_mean + C_As +  C_C_Tot + TOP5_Fe + C_Mg + TOP5_Mg + C_Mn + TOP5_Mn + WTDEPL_m + pctag_d0 + pctag_d1 + pctag_d2 + MS_SpDn + DEPTH + scrn_length_new, 
+  data = mrva_train
+)
+
+mrva_wflow <- workflow() %>%
+  add_model(reg_spec) %>%
+  add_recipe(mrva_rec)
+
+# pied recipe and workflow
+pied_rec <- recipe(
+  log_NO3_results ~ us_ppt1981_mmyr + us_tave198_degC + ET_Reitz + PET_mmyr + FloodPlain1k_new + CoarseOverlay_new + KarstDensity_new + DistToKarst_new + CarbonateKarst_1k_new +  EvaporiteKarst_1k_new + PipingPseudokarst_1k_new + VolcanicPseudokarst_1k_new + EvaporiteBasin_new + GypsumExtent_new + SM_UNIT_NAME_Alluvial_sediments__thick + LP1 + LP2 + LP3 + LP4 + LP5 + LP6 + LP7 + LP8 + LP9 + DSD1 + DSD2 + DSD3 + DSD4 + DSD6 + DSD7 + DSD8 + DSD9 + BFI48 + dtw + tt_total + wc_avg + trans + rech48 + runoff_Reitz + StreamDensity + STRM_DIST + SubsurfContactTime + TWI + LR_arsenic + AWD_MGAL_new + TileDrained_1k_new + NCManure_D0_new + NGraze_D0_new + NNonFarm_D0_new + NNonFarm_D1_new + NNonFarm_D2_new + NNonFarm_D3_new + NFarm_D0_new + NFarm_D1_new + TD_OXN_T_new + TD_REDN_T_new + CBNF_Mean_new + BNF_new + DrnClass_3_mean + DrnClass_4_mean + DrnClass_6_mean + DrnClass_8_mean + DrnClass_9_mean + hydgrp_B_mean + hydgrp_CD_mean + avg_awc_mean + avg_bd_mean + avg_kfact_mean + avg_kv_mean + AVG_NO4_mean + avg_om_mean + avg_silt_mean + AWS25_mean + HYDCLASS_mean + C_As +  C_C_Tot + TOP5_Fe + C_Mg + TOP5_Mg + C_Mn + TOP5_Mn + WTDEPL_m + pctag_d0 + pctag_d1 + pctag_d2 + MS_SpDn + DEPTH + scrn_length_new, 
+  data = pied_train
+)
+
+pied_wflow <- workflow() %>%
+  add_model(reg_spec) %>%
+  add_recipe(pied_rec)
+```
+
+Establishing cross-validation splits
+```{r}
+set.seed(19)
+seaq_splits <- vfold_cv(seaq_train, v = 5, strata = AQ_NAME)
+
+set.seed(20)
+egcp_splits <- vfold_cv(egcp_train, v = 5, strata = AQ_NAME)
+
+set.seed(21)
+mrva_splits <- vfold_cv(mrva_train, v = 5)
+
+set.seed(22)
+pied_splits <- vfold_cv(pied_train, v = 5)
+```
+
+Setting range for each parameter to be tuned
+```{r}
+params <- parameters(
+  trees(range = c(500, 2000)),
+  tree_depth(range = c(2, 10)),
+  learn_rate(range = c(-4, -1)),   # log10
+  loss_reduction(range = c(0, 10)),
+  min_n(range = c(2, 25)),
+  mtry(range = c(2, 25))
+)
+```
+
+Tuning seaq model
+```{r}
+
+# set argument for printing nice `tune_bayes()` results
+ctrl <- control_bayes(verbose = TRUE, no_improve = 10, save_pred = TRUE)
+
+# specify the metrics I want the Bayes tuning device to use to evaluate each model
+metrics <- metric_set(rmse, rsq)
+
+cl <- makePSOCKcluster(parallel::detectCores() - 1)
+registerDoParallel(cl)
+
+set.seed(23)
+seaq_search <- tune_bayes(
+  seaq_wflow, 
+  resamples = seaq_splits, 
+  initial = 12, 
+  iter = 30, 
+  param_info = params, 
+  control = ctrl, 
+  metrics = metrics
+  )
+
+stopCluster(cl)
+
+seaq_search %>%
+  collect_metrics() %>%
+  filter(!is.na(mean))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

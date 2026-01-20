@@ -1,2 +1,113 @@
-# hmm_thesis
+---
+title: "README"
+created: 12/26/2025
+updated: 1/6/2026
+output: html_document
+---
+
+### Repository Description
+
 This repository is official place where I complete/explain all wrangling, processing, and modeling steps for a groundwater nitrate model at three scales within the southeastern US for my thesis.
+
+### Important Info
+
+Projected Coordinate System: NAD 1983 Contiguous USA Albers; WKID: 5070
+Geographic Coordinate System: NAD 1983; WKID: 4269
+
+### Directory
+
+The following file structure is what I have used to organize the wrangling, processing, and modeling data and modeling efforts for the nitrate model. Please refer to the following file tree as you read and complete the efforts detailed in following sections of this document.
+
+```text
+hmm_thesis_R/
+│
+├── .gitignore
+│
+├── hmm_thesis_R.Rproj
+│
+├── README.Rmd    # guide for helping others through this R project
+│
+├── input/
+│   ├── raw/
+│   │   ├── ransom_nitrate/   # see section "Data Collection: "Testing and training"
+│   │   │   └──
+│   │   ├── usda_crop/    # see section "Data Collection: Crop cover"
+│   │   │   ├── 
+│   │   │   └──
+│   │   ├── usgs_aquifers/    # see section "Data Collection: Aquifer delineations"
+│   │   │   ├── 
+│   │   │   └──
+│   │   └── usgs_septic/    # see section "Data Collection: Septic density"
+│   │   │   ├── 
+│   │   │   └──
+│   │ 
+│   └── processed/
+│   │   ├── aquifer_shapefiles
+│   │   │   ├── all18_aquifers.csv    # can be converted to a shapefile of 18 us aquifers touching SE US
+│   │   │   └──
+│   │   ├── ransom_rasters
+│   │   │   ├── 
+│   │   │   └──
+│   │   └── tt_data
+│   │   │   ├── rans_data_bined.csv   # bined testing and training data from ransom et al. 2023
+│   │   │   ├── rans_imputed.csv    # tt_points.csv with nondetects imputed using `NADA2`
+│   │   │   ├── rans_usda.csv    # rans_imputed.csv with all usda cropland data attributed to it
+│   │   │   ├── rans_usda1.csv    # rans_usda.csv with percent ag systematically attributed to each point
+│   │   │   ├── rans_usda_septic.csv    # rans_usda1.csv with septic density attributed to each point
+│   │   │   ├── tt_points.csv   # rans_data_bined.csv clipped to all18aquifers.csv
+│   │   │   ├── tt_post_vif.csv   # rans_usda_septic.csv after removing variables with vif > 7.5 and r >= 0.9 if predictors represent same mechanism (only keeping one of the correlated predictors)
+│   │   │   └── tt_with_aq.csv    # tt_post_vif.csv with physiographic region name and aquifer code attributed to each sample point
+│
+├── output/
+│   │   ├── 
+│   │   └── 
+│
+├── Rmarkdowns/
+│   │   ├── ransom_nitrate.Rmd    # wrangling and processing the ransom test/train data
+│   │   └── usda_crop.Rmd   # wrangling and processing the 2008, 2012, 2016, and 2020 usda cropland data layers
+│
+└──  tools/
+│   │   └── nad83_albers_arcgis.prj   # projection system used for all project mapping efforts
+```
+
+### General Wrangling, Processing, and Modeling Steps
+
+**Data Collection**  
+*Testing and training* data were collected via the Ransom and Kauffman 2023 USGS data release "Data for Machine Learning Predictions of Nitrate in Shallow Groundwater in the Conterminous United States" (https://doi.org/10.5066/P9RT579Z; "National_NO3_shallow/Inputs/test_data.txt" and "National_NO3_shallow/Inputs/train_data.txt").  
+
+*Aquifer delineations* were obtained from the USGS data release "Principal Aquifers of the 48 Conterminous United States, Hawaii, Puerto Rico, and the U.S. Virgin Islands" (https://doi.org/10.5066/P9Y2HOUJ; "aquifers_us.zip/"). Aquifers touching the southeastern US are:  
+Biscayne aquifer,   
+Surficial aquifer system,  
+Coastal lowlands aquifer system,  
+Floridan aquifer system,  
+Mississippi embayment aquifer system,  
+Southeastern Coastal Plain aquifer system,  
+Mississippi River Valley alluvial aquifer,  
+Piedmont and Blue Ridge crystalline-rock aquifers,  
+Valley and Ridge carbonate-rock aquifers,  
+Valley and Ridge aquifers,  
+Castle Hayne aquifer,  
+Northern Atlantic Coastal Plain aquifer system,  
+Mississippian aquifers,  
+Ordovician aquifers,  
+Pennsylvanian aquifers,  
+Early Mesozoic basin aquifers,  
+Silurian-Devonian aquifers, and  
+Piedmont and Blue Ridge carbonate-rock aquifers  
+
+*Crop cover* data for 2008, 2012, 2016, and 2020 were obtained from the USDA (https://www.nass.usda.gov/Research_and_Science/Cropland/Release/index.php).  
+
+*Septic density* for nhd catchments were obtained from the USGS data release "Estimated Densities of Residential Septic Tanks across the Conterminous United States for 12-digit Hydrologic Unit Code 12 (HUC12), National Hydrography Dataset Plus Version 2 (NHDPlusV2) Catchment, and Block Group Scales" (https://doi.org/10.5066/P1WCYDPB; "NHD_SepticDensities.csv/").  
+
+*92 predictors* for nitrate in groundwater including x1...x92 were obtained from the USGS data release "Data for Machine Learning Predictions of Nitrate in Shallow Groundwater in the Conterminous United States" (https://doi.org/10.5066/P9RT579Z; "National_NO3_shallow/Inputs/prediction_rasters/".  
+
+**Wrangling**
+Use "Rmarkdowns/ransom_nitrate.Rmd" to wrangle testing and training data.  
+
+Use "Rmarkdowns/usda_crop.Rmd" to wrangle usda data and carefully attribute percent ag to each sample point.  
+
+Use "Rmarkdowns/usgs_septic.Rmd" to wrangle septic density data and attribute to each sample point.
+
+Use "Rmarkdwons/vif.Rmd" to calculate the vif for each predictor and eliminate highly correlated predictors.
+
+
