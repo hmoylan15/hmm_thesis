@@ -33,7 +33,7 @@ write.csv(rans_data, "../input/processed/rans_data_bined.csv")
 
 ### Clipping the Data in ArcGIS Pro 
 
-I read "rans_data_bined.csv" into ArcGIS Pro, used the "XY Table To Point" tool to plot the data using the GCS_North_American_1983 coordinate system, defined the raster projection to USA_Contiguous_Albers_Equal_Area_Conic_USGS_version, and clipped the data to a shapefile of US aquifers (see README.Rmd section "Data Collection: Aquifer delineations") touching the southeastern states (AL, FL, GA, MS, NC, SC, TN). This was done in map labeled "tt_prep". I exported this table of clipped points to "input/processed/tt_points.csv"
+One 1/18/2025, I read "../input/processed/tt_data/rans_data_bined.csv" into ArcGIS Pro, used the "XY Table To Point" tool to plot the data using the GCS_North_American_1983 coordinate system, defined the raster projection to USA_Contiguous_Albers_Equal_Area_Conic_USGS_version, and clipped the data to a shapefile of US aquifers (see README.Rmd section "Data Collection: Aquifer delineations") touching the southeastern states (AL, FL, GA, MS, NC, SC, TN). This was done in map labeled "tt_prep". I exported this table of clipped points to "input/processed/tt_points.csv"
 ```{r}
 rans_clipped <- read.csv("../input/processed/tt_data/tt_points.csv", stringsAsFactors = TRUE)
 ```

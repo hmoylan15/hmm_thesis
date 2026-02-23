@@ -1,0 +1,20 @@
+---
+title: "predictors"
+created: 1/30/2026
+updated: 1/30/2026
+output: html_document
+---
+
+### Rmarkdown Purpose
+
+The purpose of this Rmarkdown is to combine all the zonal statistics data I have for the predictor variables included in my model.
+
+
+
+
+
+
+
+
+
+

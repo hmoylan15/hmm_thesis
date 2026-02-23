@@ -43,11 +43,10 @@ hmm_thesis_R/
 │   │ 
 │   └── processed/
 │   │   ├── aquifer_shapefiles
-│   │   │   ├── all18_aquifers.csv    # can be converted to a shapefile of 18 us aquifers touching SE US
-│   │   │   └──
-│   │   ├── ransom_rasters
-│   │   │   ├── 
-│   │   │   └──
+│   │   │   └── all18_aquifers.csv    # can be converted to a shapefile of 18 us aquifers touching SE US
+│   │   ├── predictors
+│   │   │   ├── asc_mb_output   # workspace for ArcGIS Model Builder output
+│   │   │   └── asc_rasters   # ransom et al., 2023 predictor rasters
 │   │   └── tt_data
 │   │   │   ├── rans_data_bined.csv   # bined testing and training data from ransom et al. 2023
 │   │   │   ├── rans_imputed.csv    # tt_points.csv with nondetects imputed using `NADA2`
@@ -57,6 +56,16 @@ hmm_thesis_R/
 │   │   │   ├── tt_points.csv   # rans_data_bined.csv clipped to all18aquifers.csv
 │   │   │   ├── tt_post_vif.csv   # rans_usda_septic.csv after removing variables with vif > 7.5 and r >= 0.9 if predictors represent same mechanism (only keeping one of the correlated predictors)
 │   │   │   └── tt_with_aq.csv    # tt_post_vif.csv with physiographic region name and aquifer code attributed to each sample point
+│   │   └── usda_crop/
+│   │   │   ├── aquifer_clips
+│   │   │   │   ├── clips_08    #
+│   │   │   │   ├── clips_12    #
+│   │   │   │   ├── clips_16    #
+│   │   │   │   ├── clips_20    #
+│   │   └── usgs_septic/
+│   │   │   ├──
+│   │   └── WQP/
+│   │   │   ├──
 │
 ├── output/
 │   │   ├── 

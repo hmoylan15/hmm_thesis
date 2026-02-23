@@ -5,12 +5,13 @@ updated: 01/18/2025
 output: html_document
 ---
 
-The purpose of this RMarkdown is to wrangle and clean pH, hardness, nitrate, pesticide, lead, and arsenic data from the Water Quality Portal (WQP).
+The purpose of this RMarkdown is to wrangle and clean hardness, nitrate, lead, and arsenic data from the Water Quality Portal (WQP).
 
 ```{r}
 library(EPATADA)
 library(tidyverse)
 library(sf)
+library(FSA)
 ```
 
 Querying the WQP data.
@@ -52,19 +53,19 @@ ALNutrient <- purrr::map_dfr(years, \(y) {
 
 write.csv(ALNutrient, "../input/raw/WQP/ALNutrient.csv")
 
-ALPesticides <- purrr::map_dfr(years, \(y) {
-  TADA_DataRetrieval(
-    state = "AL",  
-    startDate = y[1], 
-    endDate = y[2], 
-    sampleMedia = c("water", "Water"), 
-    characteristicType = "Organics, Pesticide", 
-    siteType = "Well", 
-    applyautoclean = FALSE, 
-    ask = FALSE)
-  })
-
-write.csv(ALPesticides, "../input/raw/WQP/ALPesticides.csv")
+# ALPesticides <- purrr::map_dfr(years, \(y) {
+#   TADA_DataRetrieval(
+#     state = "AL",  
+#     startDate = y[1], 
+#     endDate = y[2], 
+#     sampleMedia = c("water", "Water"), 
+#     characteristicType = "Organics, Pesticide", 
+#     siteType = "Well", 
+#     applyautoclean = FALSE, 
+#     ask = FALSE)
+#   })
+# 
+# write.csv(ALPesticides, "../input/raw/WQP/ALPesticides.csv")
 
 ALMetals <- purrr::map_dfr(years, \(y) {
   TADA_DataRetrieval(
@@ -95,12 +96,6 @@ TDNutrient <- ALNutrient %>%
   filter(ActivityMediaSubdivisionName == "Groundwater" | ActivityMediaSubdivisionName == "Ground Water")
 # ALNutrient haS 3940 observations, TDNutrient has 3861 observations
 
-TDPesticides <- ALPesticides %>%
-  TADA_AutoClean() %>%
-  TADA_AnalysisDataFilter( . , clean = TRUE, ground_water = TRUE, sediment = FALSE, other = FALSE, surface_water = FALSE) %>%
-  filter(ActivityMediaSubdivisionName == "Groundwater" | ActivityMediaSubdivisionName == "Ground Water")
-# ALPesticides has 58965 observations, TDPesticides has 58947 observations
-
 TDMetals <- ALMetals %>%
   TADA_AutoClean() %>%
   TADA_AnalysisDataFilter( . , clean = TRUE, ground_water = TRUE, sediment = FALSE, other = FALSE, surface_water = FALSE) %>%
@@ -112,6 +107,7 @@ Creating dataframes for each water quality parameter of interest.
 ```{r}
 ph_data <- TDPhysical %>%
   filter(TADA.CharacteristicName == "PH")
+# 830 observations
 
 # hardness_columns <- TDPhysical %>%
 #   filter(TADA.CharacteristicName %in% c(
@@ -127,19 +123,23 @@ ph_data <- TDPhysical %>%
 
 hardness_data <- TDPhysical %>%
   filter(TADA.CharacteristicName == "HARDNESS, CA, MG")
+# 309 observations
 
 nitrate_data <- TDNutrient %>%
   filter(TADA.CharacteristicName == "NITRATE")
+# 778 observations
 
 arsenic_data <- TDMetals %>%
   filter(TADA.CharacteristicName == "ARSENIC")
+# 238 observations
 
 lead_data <- TDMetals %>%
   filter(TADA.CharacteristicName == "LEAD")
+# 238 observations
 
 # now I still want a dataframe containing all parameters of interest
-all_params <- bind_rows(ph_data, hardness_data, nitrate_data, arsenic_data, lead_data, TDPesticides)
-# 61340 observations
+all_params <- bind_rows(ph_data, hardness_data, nitrate_data, arsenic_data, lead_data)
+# 2393 observations
 ```
 
 Making sure all coordinates are valid
@@ -167,8 +167,8 @@ flagged_speciation <- TADA_FlagSpeciation(flagged_fraction, clean = "none")
 flagged_QC <- TADA_FindQCActivities(flagged_speciation, clean = FALSE)
 
 flagged_result_unit <- TADA_FlagResultUnit(flagged_QC, clean = "none")
-# [1] "TADA_FlagResultUnit: Rows with Suspect result value units have been flagged but retained. Review the TADA.ResultUnit.Flag column and remove rows as desired before proceeding and/or set clean = 'suspect_only' or 'both'."
-# ends with 61340 observations
+# [1] "TADA_FlagResultUnit: All characteristic/unit combinations are valid in your dataframe. Returning input dataframe with TADA.ResultUnit.Flag column for tracking."
+# ends with 2393 observations
 ```
 
 Now let's take a look at what's been flagged.
@@ -185,11 +185,11 @@ Removing untrustworthy flags.
 problem_flagged <- flagged_result_unit %>%
   filter(TADA.SampleFraction.Flag == "Suspect" | TADA.MethodSpeciation.Flag == "Suspect" | TADA.ResultUnit.Flag == "Suspect" | !TADA.ActivityType.Flag %in% c("Non_QC", "Not Reviewed") | TADA.AnalyticalMethod.Flag == "Suspect") %>%
   mutate(TADA.RemovalReason = "Invalid Unit, Method, Speciation, or Activity Type.")
-# 5675 observations
+# 903 observations
 
 after_flags <- flagged_result_unit %>% 
   filter(!ResultIdentifier %in% problem_flagged$ResultIdentifier)
-# 55665 observations
+# 1490 observations
 ```
 
 The `TADA_IDCensoredData()` function imputes non-detects for TADA.ResultMeasureValue. I dont' want that so I'm to see what the ResultDetectionCondition and DetectionQuantitationLimitTypeName fields look like. These are the fields the TADA_IDCensoredData functions uses to create the flags.
@@ -205,21 +205,21 @@ Based on these charts, I only want to remove entries where Result DetectionCondi
 problem_censored <- after_flags %>%
   filter(ResultDetectionConditionText %in% c("Detected Not Quantified", "Systematic Contamination") | MeasureQualifierCode == "J") %>%
   mutate(TADA.RemovalReason = "Invalid Censored Data.")
-# 36 observations
+# 0 observations
 
 after_censored <- after_flags %>% 
   filter(!ResultIdentifier %in% problem_censored$ResultIdentifier)
-# 55629 observations
+# 1490 observations
 ```
 
 Flagging duplicate efforts
 ```{r}
 single_org_flagged <- TADA_FindPotentialDuplicatesSingleOrg(after_censored)
-# [1] "TADA_FindPotentialDuplicatesSingleOrg: 671 groups of potentially duplicated results found in dataset. These have been placed into duplicate groups in the TADA.SingleOrgDupGroupID column and the function randomly selected one result from each group to represent a single, unduplicated value. Selected values are indicated in the TADA.SingleOrgDup.Flag as 'Unique', while duplicates are flagged as 'Duplicate' for easy filtering."
+# [1] "TADA_FindPotentialDuplicatesSingleOrg: 53 groups of potentially duplicated results found in dataset. These have been placed into duplicate groups in the TADA.SingleOrgDupGroupID column and the function randomly selected one result from each group to represent a single, unduplicated value. Selected values are indicated in the TADA.SingleOrgDup.Flag as 'Unique', while duplicates are flagged as 'Duplicate' for easy filtering."
 
 after_single <- single_org_flagged %>%
   filter(!TADA.SingleOrgDup.Flag %in% "Duplicate")
-# 54958 observations
+# 1437 observations
 
 multiple_org_flagged <- TADA_FindPotentialDuplicatesMultipleOrgs(after_single)
 # [1] "TADA_FindNearbySites: No org_hierarchy supplied by user. Organization will not be taken into account during metadata selection."
@@ -228,9 +228,12 @@ multiple_org_flagged <- TADA_FindPotentialDuplicatesMultipleOrgs(after_single)
 
 Harmonizing Nitrate Units, Fractionation, Speciation
 ```{r}
+constituent_data <- after_single %>%
+  filter(TADA.CharacteristicName == "NITRATE" | TADA.CharacteristicName == "ARSENIC" | TADA.CharacteristicName == "LEAD")
+
 # fraction assumption: dissolved = filtered
 # fraction assumption: total = unfiltered
-nutrients_harmonized <- after_single %>%
+constituents_harmonized <- constituent_data %>%
   filter(TADA.ResultSampleFractionText %in% c(
     "DISSOLVED",
     "FILTERED"
@@ -272,14 +275,286 @@ nutrients_harmonized <- after_single %>%
       TRUE ~ `WellHoleDepthMeasure.MeasureUnitCode`
     )
   )
-# 52145 observations
+# 1023 observations
 
-write.csv(nutrients_harmonized, "../input/processed/WQP/clean_params.csv")
+hardness_harmonized <- after_single %>%
+  filter(TADA.CharacteristicName == "HARDNESS, CA, MG") %>%
+  mutate(
+    numeric_well_depth = as.numeric(`WellDepthMeasure.MeasureValue`),
+    numeric_hole_depth = as.numeric(`WellHoleDepthMeasure.MeasureValue`),
+    
+    well_depth = case_when(
+      `WellDepthMeasure.MeasureUnitCode` == "ft" ~ `numeric_well_depth` * 0.3048,
+      TRUE ~ as.numeric(`numeric_well_depth`)
+    ),
+    well_depth_unit = case_when(
+      `WellDepthMeasure.MeasureUnitCode` == "ft" ~ "m",
+      TRUE ~ `WellDepthMeasure.MeasureUnitCode`
+    ),
+    hole_depth = case_when(
+      `WellHoleDepthMeasure.MeasureUnitCode` == "ft" ~ `numeric_hole_depth` * 0.3048,
+      TRUE ~ as.numeric(`numeric_hole_depth`)
+    ),
+    hole_depth_unit = case_when(
+      `WellHoleDepthMeasure.MeasureUnitCode` == "ft" ~ "m",
+      TRUE ~ `WellHoleDepthMeasure.MeasureUnitCode`
+  ))
+# 298 observations
+
+all_data <- bind_rows(constituents_harmonized, hardness_harmonized)
+# 1321 observations
+
+write.csv(all_data, "../input/processed/WQP/clean_params.csv")
 ```
 
 ```{r}
 params <- read.csv("../input/processed/WQP/clean_params.csv")
 ```
+
+In the ArcGIS Pro project titled "WQP_Params" I brought in my PR map and "../input/processed/WQP/clean_params.csv". I used the spatial join tool and calculated a field in clean_params to be physiographic region. The output for this work is "..input/processed/WQP/cleans_params_prs".
+
+I'm going to read in the WQP data with "PR" attributed to each point.
+```{r}
+params <- read.csv("../input/processed/WQP/clean_params_prs.csv") %>%
+  filter(!PR %in% "")
+
+PRs <- unique(params$PR)
+
+PRs
+# [1]  "East Gulf Coastal Plain"  "Highland Rim"             "Alabama Valley and Ridge" "Piedmont Upland"       
+
+# there is no data for the Cumberland Plateau
+PR_colors <- c(
+  "Alabama Valley and Ridge" = "#C99ADA",
+  "East Gulf Coastal Plain" = "#BED2E5", 
+  "Highland Rim" = "#CC9593", 
+  "Piedmont Upland" = "#E4BBD2"
+)
+```
+
+Now, I want to summarize the parameters I'm interested in (hardness, nitrate, pH, arsenic, lead) for each physiographic region.
+
+Arsenic
+```{r}
+# filtering the dataset to arsenic samples
+arsenic <- params %>%
+  filter(TADA_CharacteristicName %in% "ARSENIC")
+
+arsenic_stats <- arsenic %>%
+  mutate(
+    median = median(TADA_ResultMeasureValue, na.rm = TRUE),
+      q1 = quantile(TADA_ResultMeasureValue, 0.25, na.rm = TRUE),
+      q3 = quantile(TADA_ResultMeasureValue, 0.75, na.rm = TRUE)
+  )
+
+boxwhisk_arsenic <- ggplot(arsenic_stats, aes(
+  x = fct_reorder(PR, median, .desc = TRUE),
+  y = TADA_ResultMeasureValue,
+  fill = PR
+)) +
+  geom_boxplot(
+    color = "black",
+    width = 0.6,
+    position = position_dodge2(width = 1, preserve = "single"), # preserves box width
+  ) +
+  scale_fill_manual(values = PR_colors) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 15)) +
+  labs(
+    title = str_wrap(
+      "Box and Whisker Plots for Detected Arsenic Concentration by AL PR",
+      width = 50
+    ),
+    x = "Physiographic Region",
+    y = "Arsenic Concentration (ug/L)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right"
+  )
+
+ggsave(plot = boxwhisk_arsenic, dpi = 600, filename = "../output/PR_WQ/PR_arsenic.png")
+
+boxwhisk_arsenic
+```
+
+Nitrate
+```{r}
+# filtering the dataset to nitrate samples
+nitrate <- params %>%
+  filter(TADA_CharacteristicName %in% "NITRATE")
+
+nitrate_stats <- nitrate %>%
+  mutate(
+    median = median(TADA_ResultMeasureValue, na.rm = TRUE),
+      q1 = quantile(TADA_ResultMeasureValue, 0.25, na.rm = TRUE),
+      q3 = quantile(TADA_ResultMeasureValue, 0.75, na.rm = TRUE)
+  )
+
+boxwhisk_nitrate <- ggplot(nitrate_stats, aes(
+  x = fct_reorder(PR, median, .desc = TRUE),
+  y = TADA_ResultMeasureValue,
+  fill = PR
+)) +
+  geom_boxplot(
+    color = "black",
+    width = 0.6,
+    position = position_dodge2(width = 1, preserve = "single"), # preserves box width
+  ) +
+  scale_fill_manual(values = PR_colors) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 15)) +
+  labs(
+    title = str_wrap(
+      "Box and Whisker Plots for Detected Nitrate Concentration by AL PR",
+      width = 50
+    ),
+    x = "Physiographic Region",
+    y = "Nitrate Concentration (ug/L as N)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right"
+  )
+
+ggsave(plot = boxwhisk_nitrate, dpi = 600, filename = "../output/PR_WQ/PR_nitrate.png")
+
+boxwhisk_nitrate
+```
+
+Lead
+```{r}
+# filtering the dataset to lead samples
+lead <- params %>%
+  filter(TADA_CharacteristicName %in% "LEAD")
+
+lead_stats <- lead %>%
+  mutate(
+    median = median(TADA_ResultMeasureValue, na.rm = TRUE),
+      q1 = quantile(TADA_ResultMeasureValue, 0.25, na.rm = TRUE),
+      q3 = quantile(TADA_ResultMeasureValue, 0.75, na.rm = TRUE)
+  )
+
+boxwhisk_lead <- ggplot(lead_stats, aes(
+  x = fct_reorder(PR, median, .desc = TRUE),
+  y = TADA_ResultMeasureValue,
+  fill = PR
+)) +
+  geom_boxplot(
+    color = "black",
+    width = 0.6,
+    position = position_dodge2(width = 1, preserve = "single"), # preserves box width
+  ) +
+  scale_fill_manual(values = PR_colors) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 15)) +
+  labs(
+    title = str_wrap(
+      "Box and Whisker Plots for Lead Concentration by AL PR",
+      width = 50
+    ),
+    x = "Physiographic Region",
+    y = "Lead Concentration (ug/L)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right"
+  )
+
+ggsave(plot = boxwhisk_lead, dpi = 600, filename = "../output/PR_WQ/PR_lead.png")
+
+boxwhisk_lead
+```
+
+```{r}
+hardness <- params %>%
+  filter(TADA_CharacteristicName %in% "HARDNESS, CA, MG")
+
+hardness_stats <- hardness %>%
+  mutate(
+    median = median(TADA_ResultMeasureValue, na.rm = TRUE),
+      q1 = quantile(TADA_ResultMeasureValue, 0.25, na.rm = TRUE),
+      q3 = quantile(TADA_ResultMeasureValue, 0.75, na.rm = TRUE)
+  )
+
+boxwhisk_hardness <- ggplot(hardness_stats, aes(
+  x = fct_reorder(PR, median, .desc = TRUE),
+  y = TADA_ResultMeasureValue,
+  fill = PR
+)) +
+  geom_boxplot(
+    color = "black",
+    width = 0.6,
+    position = position_dodge2(width = 1, preserve = "single"), # preserves box width
+  ) +
+  scale_fill_manual(values = PR_colors) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 15)) +
+  labs(
+    title = str_wrap(
+      "Box and Whisker Plots for Hardness by AL PR",
+      width = 50
+    ),
+    x = "Physiographic Region",
+    y = "Hardness (mg/L as CaCO3)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right"
+  )
+
+ggsave(plot = boxwhisk_hardness, dpi = 600, filename = "../output/PR_WQ/PR_hardness.png")
+
+boxwhisk_hardness
+```
+
+```{r}
+combined <- combined_PR_params <- patchwork::wrap_plots(boxwhisk_arsenic + theme(legend.position = "none"), boxwhisk_hardness + theme(legend.position = "none"), boxwhisk_lead + theme(legend.position = "none"), boxwhisk_nitrate + theme(legend.position = "none"))
+
+ggsave(plot = combined, dpi = 600, filename = "../output/PR_WQ/combined_PR_params.png")
+```
+
+Performing kruskal-wallis test to see whether median arsenic, lead, nitrate, or hardness are different across physiographic regions.
+```{r}
+# hardness
+kruskal.test(TADA_ResultMeasureValue ~ PR, data = hardness_stats)
+# Kruskal-Wallis chi-squared = 81.362, df = 3, p-value < 2.2e-16
+
+dunnTest(TADA_ResultMeasureValue ~ PR, data = hardness_stats, method = "bh")
+```
+
+```{r}
+# lead
+kruskal.test(TADA_ResultMeasureValue ~ PR, data = lead_stats)
+# Kruskal-Wallis chi-squared = 11.311, df = 3, p-value = 0.01016
+
+dunnTest(TADA_ResultMeasureValue ~ PR, data = lead_stats, method = "bh")
+```
+
+```{r}
+# nitrate
+kruskal.test(TADA_ResultMeasureValue ~ PR, data = nitrate_stats)
+# Kruskal-Wallis chi-squared = 56.678, df = 3, p-value = 3.01e-12
+
+dunnTest(TADA_ResultMeasureValue ~ PR, data = nitrate_stats, method = "bh")
+```
+
+```{r}
+# arsenic
+kruskal.test(TADA_ResultMeasureValue ~ PR, data = arsenic_stats)
+# Kruskal-Wallis chi-squared = 8.4036, df = 3, p-value = 0.03837
+
+dunnTest(TADA_ResultMeasureValue ~ PR, data = arsenic_stats, method = "bh")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
